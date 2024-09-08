@@ -1,0 +1,126 @@
+import pyautogui
+import threading
+import time
+import tkinter as tk
+from tkinter import ttk
+
+waiting_for_slide = False
+click_timer = None
+click_performed = False
+packet_sequence = []
+target_packet = None
+other_packet = None
+sequence_learned = False
+move_command_received = False
+lock = threading.Lock()
+
+# GUI setup
+root = tk.Tk()
+root.title("Adaptive Mouse Click Interceptor")
+
+timer_value = tk.DoubleVar(value=1.84)
+
+def update_timer(*args):
+    try:
+        value = float(timer_entry.get())
+        if value > 0:
+            timer_value.set(value)
+            print(f"Timer value updated to: {timer_value.get()}")
+        else:
+            raise ValueError("Value must be positive")
+    except ValueError:
+        print("Invalid input. Please enter a positive number.")
+        timer_entry.delete(0, tk.END)
+        timer_entry.insert(0, str(timer_value.get()))
+
+frame = ttk.Frame(root, padding="10")
+frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+ttk.Label(frame, text="Click Delay (seconds):").grid(column=0, row=0, sticky=tk.W)
+timer_entry = ttk.Entry(frame, width=10, textvariable=timer_value)
+timer_entry.grid(column=1, row=0, sticky=(tk.W, tk.E))
+timer_entry.bind('<Return>', update_timer)
+timer_entry.bind('<FocusOut>', update_timer)
+
+ttk.Button(frame, text="Update", command=update_timer).grid(column=2, row=0, sticky=tk.W)
+
+status_var = tk.StringVar(value="Waiting for :move command...")
+status_label = ttk.Label(frame, textvariable=status_var, wraplength=300)
+status_label.grid(column=0, row=1, columnspan=3, sticky=(tk.W, tk.E))
+
+def update_status(message):
+    status_var.set(message)
+    root.update_idletasks()
+
+def on_packet(message):
+    global waiting_for_slide, packet_sequence, sequence_learned, move_command_received
+    packet = message.packet
+    packet_string = packet.g_string(ext)
+    
+    print(f"Received packet: {packet_string[:50]}...")  # Debug print
+    
+    if ':move' in packet_string.lower():
+        with lock:
+            update_status("Move command detected! Waiting for the next two SLIDEOBJECTBUNDLE packets to learn the sequence.")
+            waiting_for_slide = True
+            packet_sequence = []
+            sequence_learned = False
+            move_command_received = True
+        return
+    
+    if waiting_for_slide and packet_string.startswith("Cf"):
+        on_slideobject(packet_string)
+
+def on_slideobject(packet_data):
+    global waiting_for_slide, click_timer, click_performed, packet_sequence, target_packet, other_packet, sequence_learned, move_command_received
+    print(f"Potential SLIDEOBJECTBUNDLE packet detected: {packet_data[:50]}...")  # Debug print
+    
+    with lock:
+        if not sequence_learned:
+            packet_sequence.append(packet_data[:10])  # Store the first 10 characters to identify the packet type
+            print(f"Packet added to sequence. Current sequence: {packet_sequence}")  # Debug print
+            if len(packet_sequence) == 1:
+                update_status("First packet in sequence recorded. Waiting for the second packet.")
+            elif len(packet_sequence) == 2:
+                target_packet = packet_sequence[0]
+                other_packet = packet_sequence[1]
+                sequence_learned = True
+                update_status(f"Sequence learned. Target packet starts with: {target_packet}")
+                print(f"Other packet starts with: {other_packet}")
+            return
+        if packet_data.startswith(target_packet):
+            update_status("Target packet detected. Waiting for the other packet to start the timer.")
+        elif packet_data.startswith(other_packet):
+            update_status("Other packet detected. Starting timer for click before the next target packet.")
+            if move_command_received and not click_performed:
+                if click_timer:
+                    click_timer.cancel()
+                click_timer = threading.Timer(timer_value.get(), perform_click)
+                click_timer.start()
+        
+        if click_performed and packet_data.startswith(target_packet):
+            update_status("Click cycle completed.")
+            waiting_for_slide = False
+            click_performed = False
+            move_command_received = False
+
+def perform_click():
+    global click_performed
+    with lock:
+        if not click_performed:
+            try:
+                current_x, current_y = pyautogui.position()
+                pyautogui.click()
+                update_status(f"Mouse click performed at position: ({current_x}, {current_y})")
+                click_performed = True
+            except Exception as e:
+                update_status(f"Error performing mouse click: {e}")
+
+# Intercept all packets
+ext.intercept(Direction.TO_CLIENT, on_packet)
+ext.intercept(Direction.TO_SERVER, on_packet)
+
+update_status("Adaptive learned mouse click interceptor loaded. Type ':move' in the game chat when you see the target packet, then wait for the sequence to be learned.")
+
+# Start the GUI
+root.mainloop()
