@@ -1,0 +1,41 @@
+import pyautogui
+
+waiting_for_slide = False
+
+def on_packet(message):
+    global waiting_for_slide
+    packet = message.packet
+    packet_string = packet.g_string(ext)
+    if ':move' in packet_string.lower():
+        print("Move command detected!")
+        waiting_for_slide = True
+        return
+    if waiting_for_slide and packet_string.startswith("Cf"):
+        on_slideobject(message)
+
+def on_slideobject(message):
+    global waiting_for_slide
+    packet = message.packet
+    packet_data = packet.g_string(ext)
+    print(f"Potential SLIDEOBJECTBUNDLE packet: {packet_data}")
+    if packet_data.startswith("CfQAQCPAQCJhxkB") and packet_data.endswith(".65[2]0.65[2]"):
+        print("Target SLIDEOBJECTBUNDLE packet detected. Performing mouse click at current position.")
+        
+        try:
+            # Get current mouse position
+            current_x, current_y = pyautogui.position()
+            
+            # Perform the mouse click at the current position
+            pyautogui.click()
+            print(f"Mouse click performed at current position: ({current_x}, {current_y})")
+        except Exception as e:
+            print(f"Error performing mouse click: {e}")
+        
+        waiting_for_slide = False
+    else:
+        print("Packet did not match the target conditions.")
+
+# Intercept all packets
+ext.intercept(Direction.TO_CLIENT, on_packet)
+ext.intercept(Direction.TO_SERVER, on_packet)
+print("Debug mouse click interceptor loaded. Type ':move' in the game chat, then perform actions to trigger the SLIDEOBJECTBUNDLE packet.")

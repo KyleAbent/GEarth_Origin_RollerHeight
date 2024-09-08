@@ -1,0 +1,53 @@
+waiting_for_slide = False
+
+def on_packet(message):
+    global waiting_for_slide
+    packet = message.packet
+    packet_string = packet.g_string(ext)
+    if ':move' in packet_string.lower():
+        print("Move command detected!")
+        waiting_for_slide = True
+        return
+    if waiting_for_slide and packet_string.startswith("Cf"):
+        on_slideobject(message)
+
+def on_slideobject(message):
+    global waiting_for_slide
+    packet = message.packet
+    packet_data = packet.g_string(ext)
+    print(f"Potential SLIDEOBJECTBUNDLE packet: {packet_data}")
+    if packet_data.startswith("CfQAQCPAQCQB") and packet_data.endswith("i_Z[123]A"):
+        print("Target SLIDEOBJECTBUNDLE packet detected. Sending MOVESTUFF packet.")
+        
+        furniture_id = 2141121
+        x = 4
+        y = 13
+        rotation = 2
+        
+        move_packet = HPacket(73)  # MOVESTUFF
+        move_packet.append_int(furniture_id)
+        move_packet.append_int(x)
+        move_packet.append_int(y)
+        move_packet.append_int(rotation)
+        
+        # Log the packet in the format matching your packet logger
+        print(f"[MOVESTUFF][73]")
+        print(f"Outgoing[73] -> AI{furniture_id} {x} {y} {rotation}")
+        print("--------------------")
+        
+        # Send the packet and log the result
+        try:
+            ext.send_to_server(move_packet)
+            print("MOVESTUFF packet sent successfully")
+        except Exception as e:
+            print(f"Error sending MOVESTUFF packet: {e}")
+        
+        waiting_for_slide = False
+    else:
+        print("Packet did not match the target conditions.")
+
+# Intercept all packets
+ext.intercept(Direction.TO_CLIENT, on_packet)
+ext.intercept(Direction.TO_SERVER, on_packet)
+
+print("Debug MOVESTUFF interceptor loaded. Type ':move' in the game chat, then perform actions to trigger the SLIDEOBJECTBUNDLE packet.")
