@@ -1,0 +1,74 @@
+import pyautogui
+import threading
+import time
+
+waiting_for_slide = False
+click_timer = None
+click_performed = False
+packet_sequence = []
+target_packet = None
+other_packet = None
+sequence_learned = False
+
+def on_packet(message):
+    global waiting_for_slide, packet_sequence, sequence_learned
+    packet = message.packet
+    packet_string = packet.g_string(ext)
+    
+    print(f"Received packet: {packet_string[:50]}...")  # Debug print
+    
+    if ':move' in packet_string.lower():
+        print("Move command detected! Waiting for the next two SLIDEOBJECTBUNDLE packets to learn the sequence.")
+        waiting_for_slide = True
+        packet_sequence = []
+        sequence_learned = False
+        return
+    
+    if waiting_for_slide and packet_string.startswith("Cf"):
+        on_slideobject(packet_string)
+
+def on_slideobject(packet_data):
+    global waiting_for_slide, click_timer, click_performed, packet_sequence, target_packet, other_packet, sequence_learned
+    print(f"Potential SLIDEOBJECTBUNDLE packet detected: {packet_data[:50]}...")  # Debug print
+    
+    if not sequence_learned:
+        packet_sequence.append(packet_data[:10])  # Store the first 10 characters to identify the packet type
+        print(f"Packet added to sequence. Current sequence: {packet_sequence}")  # Debug print
+        if len(packet_sequence) == 1:
+            print("First packet in sequence recorded. Waiting for the second packet.")
+        elif len(packet_sequence) == 2:
+            target_packet = packet_sequence[0]
+            other_packet = packet_sequence[1]
+            sequence_learned = True
+            print(f"Sequence learned. Target packet starts with: {target_packet}")
+            print(f"Other packet starts with: {other_packet}")
+        return
+
+    if packet_data.startswith(target_packet):
+        print("Target packet detected. Waiting for the other packet to start the timer.")
+    elif packet_data.startswith(other_packet):
+        print("Other packet detected. Starting timer for click before the next target packet.")
+        if click_timer:
+            click_timer.cancel()
+        click_timer = threading.Timer(1.9, perform_click)
+        click_timer.start()
+    
+    if click_performed and packet_data.startswith(target_packet):
+        print("Click cycle completed.")
+        waiting_for_slide = False
+        click_performed = False
+
+def perform_click():
+    global click_performed
+    try:
+        current_x, current_y = pyautogui.position()
+        pyautogui.click()
+        print(f"Mouse click performed at position: ({current_x}, {current_y})")
+        click_performed = True
+    except Exception as e:
+        print(f"Error performing mouse click: {e}")
+
+# Intercept all packets
+ext.intercept(Direction.TO_CLIENT, on_packet)
+ext.intercept(Direction.TO_SERVER, on_packet)
+print("Adaptive learned mouse click interceptor loaded. Type ':move' in the game chat when you see the target packet, then wait for the sequence to be learned.")
